@@ -1,19 +1,21 @@
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 #include <stdint.h>
+#include <windows.h>
+#include <time.h>
 #include <openssl/sha.h>
 #include <openssl/hmac.h>
 
 #define TIME_SLOT 5
 
-double diff_ms(struct timespec a, struct timespec b) {
-    return (b.tv_sec - a.tv_sec) * 1000.0 +
-           (b.tv_nsec - a.tv_nsec) / 1e6;
+double diff_ms(LARGE_INTEGER start, LARGE_INTEGER end, LARGE_INTEGER freq) {
+    return (double)(end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart;
 }
 
 int main() {
-    struct timespec t1, t2;
+    LARGE_INTEGER t1, t2, freq;
+    QueryPerformanceFrequency(&freq);
+
     unsigned char hash[SHA256_DIGEST_LENGTH];
     unsigned int hmac_len;
 
@@ -21,10 +23,10 @@ int main() {
     const char secret[] = "K009";
 
     /* -------- t1 : SHA256(ID) -------- */
-    clock_gettime(CLOCK_MONOTONIC, &t1);
+    QueryPerformanceCounter(&t1);
     SHA256((unsigned char*)ID, strlen(ID), hash);
-    clock_gettime(CLOCK_MONOTONIC, &t2);
-    double t_sha = diff_ms(t1, t2);
+    QueryPerformanceCounter(&t2);
+    double t_sha = diff_ms(t1, t2, freq);
 
     /* Convert hash → integer (simplified) */
     uint64_t idint = 0;
@@ -32,23 +34,26 @@ int main() {
         idint = (idint << 8) | hash[i];
 
     /* -------- t2 : Division Rule -------- */
-    clock_gettime(CLOCK_MONOTONIC, &t1);
-    uint64_t ts = time(NULL);
+    QueryPerformanceCounter(&t1);
+    uint64_t ts = (uint64_t)time(NULL);
     uint64_t Q = idint / ts;
     uint64_t R = idint % ts;
-    clock_gettime(CLOCK_MONOTONIC, &t2);
-    double t_div = diff_ms(t1, t2);
+    QueryPerformanceCounter(&t2);
+    double t_div = diff_ms(t1, t2, freq);
 
     /* -------- t3 : HMAC(Q||R||ts) -------- */
     char msg[128];
-    snprintf(msg, sizeof(msg), "%lu%lu%lu", Q, R, ts);
+    snprintf(msg, sizeof(msg), "%llu%llu%llu",
+             (unsigned long long)Q,
+             (unsigned long long)R,
+             (unsigned long long)ts);
 
-    clock_gettime(CLOCK_MONOTONIC, &t1);
+    QueryPerformanceCounter(&t1);
     HMAC(EVP_sha256(), secret, strlen(secret),
          (unsigned char*)msg, strlen(msg),
          NULL, &hmac_len);
-    clock_gettime(CLOCK_MONOTONIC, &t2);
-    double t_hmac = diff_ms(t1, t2);
+    QueryPerformanceCounter(&t2);
+    double t_hmac = diff_ms(t1, t2, freq);
 
     printf("SHA256 time      : %.3f ms\n", t_sha);
     printf("Division time    : %.3f ms\n", t_div);
